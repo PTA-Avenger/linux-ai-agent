@@ -38,6 +38,18 @@ try:
 except ImportError:
     print("Stable Baselines3 not available. Install with: pip install stable-baselines3 gymnasium")
     STABLE_BASELINES_AVAILABLE = False
+    # Create dummy gym for import compatibility
+    class DummyGym:
+        class Env:
+            pass
+        class spaces:
+            @staticmethod
+            def Discrete(n):
+                return None
+            @staticmethod 
+            def Box(low, high, shape, dtype):
+                return None
+    gym = DummyGym()
 
 logger = get_logger("advanced_rl_agent")
 
@@ -185,29 +197,35 @@ class SecurityEnvironment(gym.Env):
         return state[3] > 0.95  # system_load > 95%
 
 
-class DQNNetwork(nn.Module):
-    """
-    Deep Q-Network for the RL agent.
-    """
-    
-    def __init__(self, state_size: int = 6, action_size: int = 6, hidden_size: int = 128):
-        super(DQNNetwork, self).__init__()
+if PYTORCH_AVAILABLE:
+    class DQNNetwork(nn.Module):
+        """
+        Deep Q-Network for the RL agent.
+        """
         
-        self.fc1 = nn.Linear(state_size, hidden_size)
-        self.fc2 = nn.Linear(hidden_size, hidden_size)
-        self.fc3 = nn.Linear(hidden_size, hidden_size)
-        self.fc4 = nn.Linear(hidden_size, action_size)
-        
-        self.dropout = nn.Dropout(0.2)
-        
-    def forward(self, x):
-        x = F.relu(self.fc1(x))
-        x = self.dropout(x)
-        x = F.relu(self.fc2(x))
-        x = self.dropout(x)
-        x = F.relu(self.fc3(x))
-        x = self.fc4(x)
-        return x
+        def __init__(self, state_size: int = 6, action_size: int = 6, hidden_size: int = 128):
+            super(DQNNetwork, self).__init__()
+            
+            self.fc1 = nn.Linear(state_size, hidden_size)
+            self.fc2 = nn.Linear(hidden_size, hidden_size)
+            self.fc3 = nn.Linear(hidden_size, hidden_size)
+            self.fc4 = nn.Linear(hidden_size, action_size)
+            
+            self.dropout = nn.Dropout(0.2)
+            
+        def forward(self, x):
+            x = F.relu(self.fc1(x))
+            x = self.dropout(x)
+            x = F.relu(self.fc2(x))
+            x = self.dropout(x)
+            x = F.relu(self.fc3(x))
+            x = self.fc4(x)
+            return x
+else:
+    # Dummy DQNNetwork for compatibility
+    class DQNNetwork:
+        def __init__(self, *args, **kwargs):
+            pass
 
 
 class AdvancedRLAgent:
