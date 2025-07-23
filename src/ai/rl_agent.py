@@ -141,12 +141,12 @@ class RLAgent:
         state = "_".join(sorted(state_features)) if state_features else "default"
         return state
     
-    def select_action(self, state: str, available_actions: Optional[List[str]] = None) -> str:
+    def select_action(self, context: Dict[str, Any], available_actions: Optional[List[str]] = None) -> str:
         """
         Select an action based on current state using epsilon-greedy policy.
         
         Args:
-            state: Current state string
+            context: Current context dictionary
             available_actions: List of available actions (defaults to all actions)
         
         Returns:
@@ -154,6 +154,9 @@ class RLAgent:
         """
         if available_actions is None:
             available_actions = self.action_space
+        
+        # Convert context to state string
+        state = self.get_state(context)
         
         # Initialize Q-values for new state
         if state not in self.q_table:
