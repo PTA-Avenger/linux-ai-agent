@@ -1,0 +1,351 @@
+#cloud-config
+
+# Cloud-init script for Oracle Linux 9 - Gemini Gamma Model Training
+# VM Specs: Standard2.4 (4 OCPU, 60GB RAM, 4.1 Gbps network)
+# Security: Shielded instance
+
+# Set hostname
+hostname: gemini-training-vm
+fqdn: gemini-training-vm.local
+
+# Create users
+users:
+  - name: aitrainer
+    groups: wheel, docker
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+    ssh_authorized_keys:
+      # Replace with your actual public SSH key
+      - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQ... your-public-key-here
+
+# Package updates and installations
+package_update: true
+package_upgrade: true
+
+packages:
+  # System essentials
+  - curl
+  - wget
+  - git
+  - vim
+  - htop
+  - tree
+  - unzip
+  - tar
+  - screen
+  - tmux
+  
+  # Development tools
+  - gcc
+  - gcc-c++
+  - make
+  - cmake
+  - autoconf
+  - automake
+  - libtool
+  - pkgconfig
+  
+  # Python and ML dependencies
+  - python3
+  - python3-pip
+  - python3-devel
+  - python3-venv
+  
+  # NVIDIA/CUDA support (if GPU available)
+  - kernel-devel
+  - kernel-headers
+  - dkms
+  
+  # System monitoring
+  - iotop
+  - nethogs
+  - lsof
+  - strace
+  
+  # Security tools
+  - fail2ban
+  - firewalld
+  
+  # Container runtime
+  - podman
+  - buildah
+  - skopeo
+
+# Write configuration files
+write_files:
+  # Python requirements for ML/AI
+  - path: /home/aitrainer/requirements.txt
+    owner: aitrainer:aitrainer
+    permissions: '0644'
+    content: |
+      # Core ML/AI libraries
+      torch>=2.0.0
+      torchvision
+      torchaudio
+      transformers>=4.30.0
+      accelerate
+      datasets
+      tokenizers
+      
+      # Google AI libraries
+      google-generativeai
+      google-cloud-aiplatform
+      google-auth
+      google-auth-oauthlib
+      
+      # Scientific computing
+      numpy>=1.24.0
+      pandas>=2.0.0
+      scipy
+      scikit-learn
+      matplotlib
+      seaborn
+      plotly
+      
+      # Deep learning utilities
+      wandb
+      tensorboard
+      lightning
+      
+      # Data processing
+      pillow
+      opencv-python
+      librosa
+      
+      # Development tools
+      jupyter
+      jupyterlab
+      ipython
+      black
+      flake8
+      pytest
+      
+      # Performance monitoring
+      psutil
+      GPUtil
+      py3nvml
+
+  # Training environment setup script
+  - path: /home/aitrainer/setup_training_env.sh
+    owner: aitrainer:aitrainer
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      set -e
+      
+      echo "Setting up Gemini Gamma training environment..."
+      
+      # Create virtual environment
+      python3 -m venv ~/gemini_env
+      source ~/gemini_env/bin/activate
+      
+      # Upgrade pip
+      pip install --upgrade pip setuptools wheel
+      
+      # Install requirements
+      pip install -r ~/requirements.txt
+      
+      # Create project directories
+      mkdir -p ~/projects/gemini-gamma/{data,models,logs,scripts,notebooks}
+      
+      # Set up Jupyter Lab
+      jupyter lab --generate-config
+      
+      # Create training script template
+      cat > ~/projects/gemini-gamma/scripts/train_gemini.py << 'EOF'
+      #!/usr/bin/env python3
+      """
+      Gemini Gamma Model Training Script Template
+      """
+      
+      import os
+      import sys
+      import torch
+      import logging
+      from datetime import datetime
+      
+      # Configure logging
+      logging.basicConfig(
+          level=logging.INFO,
+          format='%(asctime)s - %(levelname)s - %(message)s',
+          handlers=[
+              logging.FileHandler(f'~/projects/gemini-gamma/logs/training_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log'),
+              logging.StreamHandler(sys.stdout)
+          ]
+      )
+      
+      def main():
+          logging.info("Starting Gemini Gamma model training...")
+          
+          # Check GPU availability
+          if torch.cuda.is_available():
+              device = torch.device("cuda")
+              logging.info(f"GPU available: {torch.cuda.get_device_name(0)}")
+              logging.info(f"GPU memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
+          else:
+              device = torch.device("cpu")
+              logging.info("Using CPU for training")
+          
+          # Your training code here
+          logging.info("Training setup complete. Add your model training logic here.")
+      
+      if __name__ == "__main__":
+          main()
+      EOF
+      
+      chmod +x ~/projects/gemini-gamma/scripts/train_gemini.py
+      
+      echo "Training environment setup complete!"
+      echo "Activate with: source ~/gemini_env/bin/activate"
+
+  # System optimization script
+  - path: /home/aitrainer/optimize_system.sh
+    owner: aitrainer:aitrainer
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      set -e
+      
+      echo "Optimizing system for ML training..."
+      
+      # Increase file limits for ML workloads
+      sudo tee -a /etc/security/limits.conf << EOF
+      aitrainer soft nofile 65536
+      aitrainer hard nofile 65536
+      aitrainer soft nproc 32768
+      aitrainer hard nproc 32768
+      EOF
+      
+      # Optimize kernel parameters for ML
+      sudo tee -a /etc/sysctl.conf << EOF
+      # Network optimizations
+      net.core.rmem_max = 134217728
+      net.core.wmem_max = 134217728
+      net.ipv4.tcp_rmem = 4096 65536 134217728
+      net.ipv4.tcp_wmem = 4096 65536 134217728
+      
+      # Memory management
+      vm.swappiness = 10
+      vm.dirty_ratio = 15
+      vm.dirty_background_ratio = 5
+      
+      # File system
+      fs.file-max = 2097152
+      EOF
+      
+      # Apply sysctl changes
+      sudo sysctl -p
+      
+      echo "System optimization complete!"
+
+  # Firewall configuration
+  - path: /etc/firewalld/services/jupyter.xml
+    permissions: '0644'
+    content: |
+      <?xml version="1.0" encoding="utf-8"?>
+      <service>
+        <short>Jupyter</short>
+        <description>Jupyter Lab/Notebook server</description>
+        <port protocol="tcp" port="8888"/>
+      </service>
+
+  # Fail2ban jail for SSH
+  - path: /etc/fail2ban/jail.local
+    permissions: '0644'
+    content: |
+      [DEFAULT]
+      bantime = 3600
+      findtime = 600
+      maxretry = 3
+      
+      [sshd]
+      enabled = true
+      port = ssh
+      logpath = /var/log/secure
+      maxretry = 3
+
+# Run commands during boot
+runcmd:
+  # Update system
+  - dnf update -y
+  
+  # Enable and start services
+  - systemctl enable --now firewalld
+  - systemctl enable --now fail2ban
+  
+  # Configure firewall
+  - firewall-cmd --permanent --add-service=ssh
+  - firewall-cmd --permanent --add-service=jupyter
+  - firewall-cmd --permanent --add-port=22/tcp
+  - firewall-cmd --reload
+  
+  # Install EPEL repository
+  - dnf install -y epel-release
+  
+  # Install additional Python packages
+  - dnf install -y python3-pip python3-devel
+  
+  # Set up Docker/Podman for containerized training
+  - systemctl enable --now podman
+  
+  # Create swap file for memory management (8GB)
+  - fallocate -l 8G /swapfile
+  - chmod 600 /swapfile
+  - mkswap /swapfile
+  - swapon /swapfile
+  - echo '/swapfile none swap sw 0 0' >> /etc/fstab
+  
+  # Run setup scripts as aitrainer user
+  - sudo -u aitrainer bash /home/aitrainer/setup_training_env.sh
+  - sudo -u aitrainer bash /home/aitrainer/optimize_system.sh
+  
+  # Set up log rotation for training logs
+  - |
+    cat > /etc/logrotate.d/gemini-training << EOF
+    /home/aitrainer/projects/gemini-gamma/logs/*.log {
+        daily
+        rotate 30
+        compress
+        delaycompress
+        missingok
+        notifempty
+        create 644 aitrainer aitrainer
+    }
+    EOF
+
+# Final message
+final_message: |
+  Gemini Gamma Training VM Setup Complete!
+  
+  VM Configuration:
+  - Oracle Linux 9 (2025.06.17-0)
+  - 4 OCPU cores, 60GB RAM
+  - Shielded instance security
+  - 8GB swap file created
+  
+  Installed Components:
+  - Python 3 with ML/AI libraries
+  - Jupyter Lab environment
+  - Docker/Podman for containers
+  - System monitoring tools
+  - Security hardening (fail2ban, firewall)
+  
+  Next Steps:
+  1. SSH into the VM: ssh aitrainer@<VM_IP>
+  2. Activate Python environment: source ~/gemini_env/bin/activate
+  3. Start Jupyter Lab: jupyter lab --ip=0.0.0.0 --port=8888 --no-browser
+  4. Begin training: cd ~/projects/gemini-gamma
+  
+  Security Notes:
+  - Update the SSH public key in the users section
+  - Firewall is configured with SSH and Jupyter access
+  - Fail2ban is active for SSH protection
+  
+  Happy training with Gemini Gamma!
+
+# Power state - reboot after setup
+power_state:
+  mode: reboot
+  message: "Rebooting after cloud-init setup"
+  timeout: 30
+  condition: true
