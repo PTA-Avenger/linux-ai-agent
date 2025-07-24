@@ -111,6 +111,7 @@ Available Commands:
   • ai stats                    - Show AI agent statistics
   • generate command <desc>     - Generate shell command from description
   • generate script <desc>      - Generate shell script from description
+  • clean up                    - System cleanup recommendations
 
 ⚙️ General:
   • help                        - Show this help
@@ -225,6 +226,9 @@ Examples:
             
             elif intent == "ai_recommend":
                 self._handle_ai_recommend(parameters, command)
+            
+            elif intent == "system_cleanup":
+                self._handle_system_cleanup(parameters)
             
             else:
                 self.print_colored(f"❓ Command '{intent}' is not implemented yet.", 'warning')
@@ -980,6 +984,78 @@ Examples:
                 return f"{size_bytes:.1f} {unit}"
             size_bytes /= 1024.0
         return f"{size_bytes:.1f} PB"
+
+    def _handle_system_cleanup(self, parameters: Dict[str, Any]):
+        """Handle system cleanup operations."""
+        self.print_colored("🧹 System Cleanup Operations", 'header')
+        
+        # Generate cleanup script
+        cleanup_description = "clean up system files, logs, and temporary data"
+        
+        self.print_colored("🤖 Generating system cleanup script...", 'info')
+        
+        result = self.command_generator.generate_command(cleanup_description)
+        
+        if result.get("success"):
+            command = result["command"]
+            confidence = result["confidence"]
+            safety_level = result["safety_level"]
+            
+            self.print_colored("✅ Generated Cleanup Commands:", 'success')
+            self.print_colored(f"📝 Command: {command}", 'info')
+            self.print_colored(f"🎯 Confidence: {confidence:.2f}", 'info')
+            self.print_colored(f"🛡️  Safety Level: {safety_level}", 
+                              'warning' if safety_level != 'safe' else 'success')
+            
+            # Also provide manual cleanup suggestions
+            self.print_colored("\n💡 Manual Cleanup Recommendations:", 'header')
+            cleanup_tasks = [
+                "Clear package cache: sudo apt autoremove && sudo apt autoclean",
+                "Clean log files: sudo journalctl --vacuum-time=7d",
+                "Remove temporary files: sudo rm -rf /tmp/* (use with caution)",
+                "Clear user cache: rm -rf ~/.cache/*",
+                "Clean thumbnails: rm -rf ~/.thumbnails/*"
+            ]
+            
+            for i, task in enumerate(cleanup_tasks, 1):
+                self.print_colored(f"    {i}. {task}", 'info')
+            
+            self.print_colored("\n⚠️  Safety Notes:", 'warning')
+            self.print_colored("    • Review commands before execution", 'warning')
+            self.print_colored("    • Backup important data first", 'warning')
+            self.print_colored("    • Test in non-production environment", 'warning')
+            
+        else:
+            # Fallback to manual recommendations
+            self.print_colored("💡 System Cleanup Recommendations:", 'header')
+            
+            cleanup_categories = {
+                "🗂️  Package Management": [
+                    "sudo apt update && sudo apt upgrade",
+                    "sudo apt autoremove",
+                    "sudo apt autoclean"
+                ],
+                "📝 Log Files": [
+                    "sudo journalctl --vacuum-time=7d",
+                    "sudo find /var/log -name '*.log' -mtime +30 -delete",
+                    "sudo logrotate /etc/logrotate.conf"
+                ],
+                "🗃️  Temporary Files": [
+                    "sudo rm -rf /tmp/*",
+                    "rm -rf ~/.cache/*",
+                    "rm -rf ~/.thumbnails/*"
+                ],
+                "💾 Disk Space": [
+                    "df -h  # Check disk usage",
+                    "du -sh /* | sort -hr | head -10  # Find large directories",
+                    "find . -type f -size +100M  # Find large files"
+                ]
+            }
+            
+            for category, commands in cleanup_categories.items():
+                self.print_colored(f"\n{category}:", 'info')
+                for cmd in commands:
+                    self.print_colored(f"    • {cmd}", 'info')
 
     def _handle_ai_stats(self):
         """Handle AI agent statistics display."""

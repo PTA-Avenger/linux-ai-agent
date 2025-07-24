@@ -124,6 +124,13 @@ class IntentParser:
                 r"create (?:a )?script (?:to |for )?(.+)",
                 r"make (?:a )?script (?:to |for )?(.+)",
             ],
+            "system_cleanup": [
+                r"clean up (?:the )?system",
+                r"cleanup system",
+                r"clean up",
+                r"system cleanup",
+                r"clean (?:the )?system",
+            ],
             "heuristic_scan": [
                 r"heuristic scan (.+)",
                 r"analyze (.+) heuristically",
@@ -329,6 +336,7 @@ class IntentParser:
                 "monitor_directory": "monitor directory <path>",
                 "heuristic_scan": "heuristic scan <filename>",
                 "detailed_scan": "detailed scan <filename>",
+                "system_cleanup": "clean up",
                 "ai_stats": "ai stats",
                 "ai_recommend": "ai recommend <context>",
                 "generate_command": "generate command <description>",
