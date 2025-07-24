@@ -17,6 +17,12 @@ from monitor import get_disk_usage, monitor_disk_space, get_file_activity
 from scanner import ClamAVScanner, HeuristicScanner, QuarantineManager
 from scanner.scan_reporter import ScanReporter
 from ai import IntentParser, RLAgent, CommandGenerator
+try:
+    from ai import GemmaAgent
+    GEMMA_AVAILABLE = True
+except ImportError:
+    GemmaAgent = None
+    GEMMA_AVAILABLE = False
 from utils import get_logger, log_operation
 
 try:
@@ -41,6 +47,16 @@ class CLI:
         self.heuristic_scanner = HeuristicScanner()
         self.quarantine_manager = QuarantineManager()
         self.scan_reporter = ScanReporter()
+        
+        # Initialize Gemma agent if available
+        self.gemma_agent = None
+        if GEMMA_AVAILABLE:
+            try:
+                self.gemma_agent = GemmaAgent(mode="auto")
+                logger.info("Gemma agent initialized successfully")
+            except Exception as e:
+                logger.warning(f"Gemma agent initialization failed: {e}")
+                self.gemma_agent = None
         
         self.running = False
         self.command_history = []
