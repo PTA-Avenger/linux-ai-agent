@@ -131,6 +131,18 @@ class IntentParser:
                 r"system cleanup",
                 r"clean (?:the )?system",
             ],
+            "gemma_chat": [
+                r"gemma (.+)",
+                r"ask gemma (.+)",
+                r"chat with gemma (.+)",
+                r"gemma help (.+)",
+            ],
+            "ai_analyze": [
+                r"ai analyze (.+)",
+                r"analyze with ai (.+)",
+                r"ai analysis (.+)",
+                r"get ai analysis (.+)",
+            ],
             "heuristic_scan": [
                 r"heuristic scan (.+)",
                 r"analyze (.+) heuristically",
@@ -337,6 +349,8 @@ class IntentParser:
                 "heuristic_scan": "heuristic scan <filename>",
                 "detailed_scan": "detailed scan <filename>",
                 "system_cleanup": "clean up",
+                "gemma_chat": "gemma <question>",
+                "ai_analyze": "ai analyze <topic>",
                 "ai_stats": "ai stats",
                 "ai_recommend": "ai recommend <context>",
                 "generate_command": "generate command <description>",
