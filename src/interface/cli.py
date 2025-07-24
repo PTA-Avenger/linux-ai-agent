@@ -15,6 +15,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from crud import create_file, read_file, update_file, delete_file
 from monitor import get_disk_usage, monitor_disk_space, get_file_activity
 from scanner import ClamAVScanner, HeuristicScanner, QuarantineManager
+from scanner.scan_reporter import ScanReporter
 from ai import IntentParser, RLAgent, CommandGenerator
 from utils import get_logger, log_operation
 
@@ -39,6 +40,7 @@ class CLI:
         self.clamav_scanner = ClamAVScanner()
         self.heuristic_scanner = HeuristicScanner()
         self.quarantine_manager = QuarantineManager()
+        self.scan_reporter = ScanReporter()
         
         self.running = False
         self.command_history = []
@@ -91,6 +93,7 @@ Available Commands:
   • scan file <path>            - Scan file for malware
   • scan directory <path>       - Scan directory for malware
   • heuristic scan <path>       - Perform heuristic analysis
+  • detailed scan <path>        - Generate comprehensive security report
 
 🛡️ Quarantine Operations:
   • quarantine file <path>      - Move file to quarantine
@@ -207,6 +210,9 @@ Examples:
             
             elif intent == "heuristic_scan":
                 self._handle_heuristic_scan(parameters)
+            
+            elif intent == "detailed_scan":
+                self._handle_detailed_scan(parameters)
             
             elif intent == "generate_command":
                 self._handle_generate_command(parameters, command)
@@ -380,6 +386,10 @@ Examples:
             for rec in recommendations[:2]:
                 confidence = int(rec["confidence"] * 100)
                 self.print_colored(f"    • {rec['action']} (confidence: {confidence}%)", 'info')
+        
+        # Offer detailed report option for suspicious files
+        if heuristic_result.get("overall_suspicious", False) or clamav_result.get("infected", False):
+            self.print_colored("\n💡 Tip: Use 'detailed scan <filename>' for comprehensive analysis report", 'info')
     
     def _handle_heuristic_scan(self, parameters: Dict[str, Any]):
         """Handle dedicated heuristic scanning."""
@@ -760,6 +770,216 @@ Examples:
             except Exception as e:
                 self.print_colored(f"❌ Unexpected error: {e}", 'error')
                 logger.error(f"Unexpected error in CLI: {e}")
+
+    def _handle_detailed_scan(self, parameters: Dict[str, Any]):
+        """Handle detailed file scanning with comprehensive reporting."""
+        if "path" not in parameters:
+            self.print_colored("❌ Please specify a file path for detailed scan.", 'error')
+            return
+        
+        filepath = parameters["path"]
+        self.print_colored(f"🔍 Performing detailed scan on '{filepath}'...", 'info')
+        self.print_colored("📊 Generating comprehensive report...", 'info')
+        
+        start_time = time.time()
+        
+        # Perform all scans
+        clamav_result = self.clamav_scanner.scan_file(filepath)
+        heuristic_result = self.heuristic_scanner.scan_file(filepath)
+        
+        processing_time = time.time() - start_time
+        
+        # Combine results for detailed analysis
+        combined_results = {
+            "infected": clamav_result.get("infected", False),
+            "virus_name": clamav_result.get("virus_name"),
+            "overall_suspicious": heuristic_result.get("overall_suspicious", False),
+            "risk_score": heuristic_result.get("risk_score", 0),
+            "all_reasons": heuristic_result.get("all_reasons", []),
+            "entropy_analysis": heuristic_result.get("entropy_analysis", {}),
+            "attribute_analysis": heuristic_result.get("attribute_analysis", {}),
+            "processing_time": f"{processing_time:.2f}s",
+            "scan_type": "detailed"
+        }
+        
+        # Generate detailed report
+        additional_data = {
+            "filepath": filepath,
+            "processing_time": f"{processing_time:.2f}s",
+            "deep_scan": True
+        }
+        
+        detailed_report = self.scan_reporter.generate_detailed_report(
+            "file_scan", combined_results, additional_data
+        )
+        
+        # Display comprehensive report
+        self._display_detailed_report(detailed_report, filepath)
+    
+    def _display_detailed_report(self, report: Dict[str, Any], filepath: str):
+        """Display a comprehensive detailed scan report."""
+        self.print_colored("\n" + "=" * 80, 'header')
+        self.print_colored("📋 COMPREHENSIVE SCAN REPORT", 'header')
+        self.print_colored("=" * 80, 'header')
+        
+        # Report header
+        self.print_colored(f"📁 File: {Path(filepath).name}", 'info')
+        self.print_colored(f"🆔 Report ID: {report.get('report_id', 'N/A')}", 'info')
+        self.print_colored(f"⏰ Timestamp: {report.get('timestamp', 'N/A')}", 'info')
+        
+        # Executive summary
+        summary = report.get('summary', 'No summary available')
+        if 'INFECTED' in summary:
+            self.print_colored(f"🚨 EXECUTIVE SUMMARY: {summary}", 'error')
+        elif 'SUSPICIOUS' in summary:
+            self.print_colored(f"⚠️  EXECUTIVE SUMMARY: {summary}", 'warning')
+        else:
+            self.print_colored(f"✅ EXECUTIVE SUMMARY: {summary}", 'success')
+        
+        # File analysis
+        file_analysis = report.get('file_analysis', {})
+        if file_analysis and not file_analysis.get('error'):
+            self.print_colored("\n📊 FILE ANALYSIS:", 'header')
+            
+            basic_info = file_analysis.get('basic_info', {})
+            if basic_info:
+                self.print_colored(f"    📏 Size: {basic_info.get('size_human', 'Unknown')}", 'info')
+                self.print_colored(f"    📝 Type: {basic_info.get('extension', 'Unknown')}", 'info')
+                self.print_colored(f"    📅 Modified: {basic_info.get('modified', 'Unknown')[:19]}", 'info')
+            
+            file_type = file_analysis.get('file_type', {})
+            if file_type:
+                category = file_type.get('category', 'unknown')
+                risk_level = file_type.get('risk_level', 'unknown')
+                description = file_type.get('description', 'No description')
+                
+                risk_color = 'error' if risk_level == 'high' else 'warning' if risk_level == 'medium' else 'success'
+                self.print_colored(f"    🏷️  Category: {category.title()} ({risk_level.upper()} risk)", risk_color)
+                self.print_colored(f"    📄 Description: {description}", 'info')
+            
+            # File hashes
+            identity = file_analysis.get('identity', {})
+            if identity and identity.get('sha256'):
+                self.print_colored(f"    🔐 SHA256: {identity['sha256'][:32]}...", 'info')
+        
+        # Security assessment
+        security = report.get('security_assessment', {})
+        if security:
+            self.print_colored("\n🛡️  SECURITY ASSESSMENT:", 'header')
+            
+            risk_level = security.get('risk_level', 'UNKNOWN')
+            risk_score = security.get('risk_score', 0)
+            
+            risk_color = 'error' if risk_level == 'CRITICAL' else 'warning' if risk_level in ['HIGH', 'MEDIUM'] else 'success'
+            self.print_colored(f"    📊 Risk Level: {risk_level} (Score: {risk_score}/100)", risk_color)
+            self.print_colored(f"    ⏰ Priority: {security.get('mitigation_priority', 'Unknown')}", 'info')
+            
+            risk_factors = security.get('risk_factors', [])
+            if risk_factors:
+                self.print_colored("    ⚠️  Risk Factors:", 'warning')
+                for factor in risk_factors:
+                    self.print_colored(f"        • {factor}", 'warning')
+            
+            threat_categories = security.get('threat_categories', [])
+            if threat_categories and threat_categories != ['no_threats']:
+                self.print_colored(f"    🎯 Threat Categories: {', '.join(threat_categories)}", 'warning')
+        
+        # Threat indicators
+        indicators = report.get('threat_indicators', [])
+        if indicators:
+            self.print_colored("\n🚩 THREAT INDICATORS:", 'header')
+            for i, indicator in enumerate(indicators[:10], 1):
+                severity = indicator.get('severity', 'unknown')
+                confidence = indicator.get('confidence', 0)
+                description = indicator.get('description', 'No description')
+                
+                severity_color = 'error' if severity == 'high' else 'warning' if severity == 'medium' else 'info'
+                self.print_colored(f"    {i}. {description}", severity_color)
+                self.print_colored(f"       Severity: {severity.upper()}, Confidence: {confidence:.1%}", 'info')
+            
+            if len(indicators) > 10:
+                self.print_colored(f"    ... and {len(indicators) - 10} more indicators", 'info')
+        
+        # Technical details
+        technical = report.get('technical_details', {})
+        if technical:
+            self.print_colored("\n🔧 TECHNICAL DETAILS:", 'header')
+            
+            scan_methods = technical.get('scan_methods', [])
+            if scan_methods:
+                self.print_colored(f"    🔍 Scan Methods: {', '.join(scan_methods)}", 'info')
+            
+            detection_engines = technical.get('detection_engines', [])
+            if detection_engines:
+                self.print_colored(f"    🤖 Detection Engines: {', '.join(detection_engines)}", 'info')
+            
+            processing_time = technical.get('processing_time', 'unknown')
+            self.print_colored(f"    ⏱️  Processing Time: {processing_time}", 'info')
+            
+            entropy_metrics = technical.get('entropy_metrics', {})
+            if entropy_metrics:
+                self.print_colored("    📈 Entropy Analysis:", 'info')
+                self.print_colored(f"        Average: {entropy_metrics.get('average', 0):.3f} bits/byte", 'info')
+                self.print_colored(f"        Maximum: {entropy_metrics.get('maximum', 0):.3f} bits/byte", 'info')
+                self.print_colored(f"        Chunks: {entropy_metrics.get('chunks_analyzed', 0)} analyzed", 'info')
+                self.print_colored(f"        High Entropy: {entropy_metrics.get('high_entropy_chunks', 0)} chunks", 'info')
+        
+        # Compliance check
+        compliance = report.get('compliance_check', {})
+        if compliance:
+            self.print_colored("\n📋 COMPLIANCE CHECK:", 'header')
+            
+            compliance_level = compliance.get('compliance_level', 'UNKNOWN')
+            compliance_score = compliance.get('compliance_score', 0)
+            
+            compliance_color = 'success' if compliance_level == 'COMPLIANT' else 'warning' if compliance_level == 'PARTIAL_COMPLIANCE' else 'error'
+            self.print_colored(f"    ✅ Status: {compliance_level} (Score: {compliance_score}/100)", compliance_color)
+            
+            issues = compliance.get('issues', [])
+            if issues:
+                self.print_colored("    ⚠️  Issues:", 'warning')
+                for issue in issues:
+                    self.print_colored(f"        • {issue}", 'warning')
+        
+        # Recommendations
+        recommendations = report.get('recommendations', [])
+        if recommendations:
+            self.print_colored("\n💡 RECOMMENDATIONS:", 'header')
+            
+            for i, rec in enumerate(recommendations[:5], 1):
+                priority = rec.get('priority', 'UNKNOWN')
+                action = rec.get('action', 'No action specified')
+                description = rec.get('description', 'No description')
+                rationale = rec.get('rationale', 'No rationale provided')
+                
+                priority_color = 'error' if priority == 'CRITICAL' else 'warning' if priority == 'HIGH' else 'info'
+                self.print_colored(f"    {i}. [{priority}] {description}", priority_color)
+                self.print_colored(f"       Action: {action}", 'info')
+                self.print_colored(f"       Rationale: {rationale}", 'info')
+                
+                steps = rec.get('steps', [])
+                if steps:
+                    self.print_colored("       Steps:", 'info')
+                    for step in steps[:3]:
+                        self.print_colored(f"         • {step}", 'info')
+                    if len(steps) > 3:
+                        self.print_colored(f"         ... and {len(steps) - 3} more steps", 'info')
+                
+                if i < len(recommendations):
+                    self.print_colored("", 'info')  # Empty line between recommendations
+        
+        # Report footer
+        self.print_colored("\n" + "=" * 80, 'header')
+        self.print_colored("📄 End of Report", 'header')
+        self.print_colored("=" * 80 + "\n", 'header')
+    
+    def _format_file_size(self, size_bytes: int) -> str:
+        """Format file size in human readable format."""
+        for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+            if size_bytes < 1024.0:
+                return f"{size_bytes:.1f} {unit}"
+            size_bytes /= 1024.0
+        return f"{size_bytes:.1f} PB"
 
     def _handle_ai_stats(self):
         """Handle AI agent statistics display."""

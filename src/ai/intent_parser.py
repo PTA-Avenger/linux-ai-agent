@@ -129,6 +129,13 @@ class IntentParser:
                 r"analyze (.+) heuristically",
                 r"check (.+) with heuristics",
             ],
+            "detailed_scan": [
+                r"detailed scan (.+)",
+                r"comprehensive scan (.+)",
+                r"full report (.+)",
+                r"detailed analysis (.+)",
+                r"generate report (.+)",
+            ],
             
             # General commands
             "help": [
@@ -321,6 +328,7 @@ class IntentParser:
                 "system_stats": "system stats",
                 "monitor_directory": "monitor directory <path>",
                 "heuristic_scan": "heuristic scan <filename>",
+                "detailed_scan": "detailed scan <filename>",
                 "ai_stats": "ai stats",
                 "ai_recommend": "ai recommend <context>",
                 "generate_command": "generate command <description>",
