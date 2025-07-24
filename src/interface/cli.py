@@ -14,7 +14,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from crud import create_file, read_file, update_file, delete_file
 from monitor import get_disk_usage, monitor_disk_space, get_file_activity
 from scanner import ClamAVScanner, HeuristicScanner, QuarantineManager
-from ai import IntentParser, RLAgent
+from ai import IntentParser, RLAgent, CommandGenerator
 from utils import get_logger, log_operation
 
 try:
@@ -34,6 +34,7 @@ class CLI:
     def __init__(self):
         self.intent_parser = IntentParser()
         self.rl_agent = RLAgent()
+        self.command_generator = CommandGenerator()
         self.clamav_scanner = ClamAVScanner()
         self.heuristic_scanner = HeuristicScanner()
         self.quarantine_manager = QuarantineManager()
@@ -104,6 +105,8 @@ Available Commands:
 🤖 AI Operations:
   • ai recommend <context>      - Get AI recommendations
   • ai stats                    - Show AI agent statistics
+  • generate command <desc>     - Generate shell command from description
+  • generate script <desc>      - Generate shell script from description
 
 ⚙️ General:
   • help                        - Show this help
@@ -114,6 +117,8 @@ Examples:
   create file test.txt
   quarantine file suspicious.exe
   disk usage
+  generate command backup /var/log to /backup
+  generate script that cleans up system daily
         """
         self.print_colored(help_text, 'info')
     
@@ -190,6 +195,15 @@ Examples:
             
             elif intent == "monitor_directory":
                 self._handle_monitor_directory(parameters)
+            
+            elif intent == "heuristic_scan":
+                self._handle_heuristic_scan(parameters)
+            
+            elif intent == "generate_command":
+                self._handle_generate_command(parameters, command)
+            
+            elif intent == "generate_script":
+                self._handle_generate_script(parameters, command)
             
             else:
                 self.print_colored(f"❓ Command '{intent}' is not implemented yet.", 'warning')
@@ -328,7 +342,7 @@ Examples:
             self.print_colored(f"⚠️  ClamAV: {clamav_result.get('message', 'Error')}", 'warning')
         
         # Heuristic results
-        if heuristic_result["overall_suspicious"]:
+        if heuristic_result.get("overall_suspicious", False):
             risk_score = heuristic_result.get("risk_score", 0)
             self.print_colored(f"🔍 Heuristic: SUSPICIOUS (Risk: {risk_score}%)", 'warning')
             for reason in heuristic_result.get("all_reasons", []):
@@ -351,6 +365,64 @@ Examples:
             for rec in recommendations[:2]:
                 confidence = int(rec["confidence"] * 100)
                 self.print_colored(f"    • {rec['action']} (confidence: {confidence}%)", 'info')
+    
+    def _handle_heuristic_scan(self, parameters: Dict[str, Any]):
+        """Handle dedicated heuristic scanning."""
+        if "path" not in parameters:
+            self.print_colored("❌ Please specify a file path for heuristic scan.", 'error')
+            return
+        
+        filepath = parameters["path"]
+        self.print_colored(f"🔍 Performing heuristic scan on '{filepath}'...", 'info')
+        
+        # Heuristic scan only
+        heuristic_result = self.heuristic_scanner.scan_file(filepath)
+        
+        # Display detailed heuristic results
+        self.print_colored("📊 Heuristic Analysis Results:", 'header')
+        
+        if heuristic_result.get("overall_suspicious", False):
+            risk_score = heuristic_result.get("risk_score", 0)
+            self.print_colored(f"⚠️  Status: SUSPICIOUS (Risk Score: {risk_score}%)", 'warning')
+            
+            # Show detailed analysis
+            entropy_analysis = heuristic_result.get("entropy_analysis", {})
+            if entropy_analysis:
+                avg_entropy = entropy_analysis.get("average_entropy", 0)
+                max_entropy = entropy_analysis.get("max_entropy", 0)
+                high_entropy_chunks = entropy_analysis.get("high_entropy_chunks", 0)
+                
+                self.print_colored(f"📈 Entropy Analysis:", 'info')
+                self.print_colored(f"    • Average entropy: {avg_entropy:.2f}", 'info')
+                self.print_colored(f"    • Maximum entropy: {max_entropy:.2f}", 'info')
+                self.print_colored(f"    • High entropy chunks: {high_entropy_chunks}", 'info')
+            
+            # Show all reasons
+            for reason in heuristic_result.get("all_reasons", []):
+                self.print_colored(f"    • {reason}", 'warning')
+                
+            # AI recommendation for heuristic results
+            context = {
+                "file_size": Path(filepath).stat().st_size if Path(filepath).exists() else 0,
+                "scan_results": {
+                    "infected": False,
+                    "suspicious": True,
+                    "risk_score": risk_score
+                }
+            }
+            
+            recommendations = self.rl_agent.get_recommendations(context)
+            if recommendations:
+                self.print_colored("🤖 AI Recommendations:", 'header')
+                for rec in recommendations[:3]:  # Show more recommendations for heuristic
+                    confidence = int(rec["confidence"] * 100)
+                    self.print_colored(f"    • {rec['action']} (confidence: {confidence}%)", 'info')
+        else:
+            self.print_colored("✅ Status: Clean", 'success')
+            entropy_analysis = heuristic_result.get("entropy_analysis", {})
+            if entropy_analysis:
+                avg_entropy = entropy_analysis.get("average_entropy", 0)
+                self.print_colored(f"📈 Average entropy: {avg_entropy:.2f} (within normal range)", 'success')
     
     def _handle_scan_directory(self, parameters: Dict[str, Any]):
         """Handle directory scanning."""
@@ -519,6 +591,122 @@ Examples:
                 
         except KeyboardInterrupt:
             self.print_colored("\n⏹️  Monitoring stopped by user.", 'warning')
+    
+    def _handle_generate_command(self, parameters: Dict[str, Any], original_command: str):
+        """Handle command generation from natural language."""
+        # Extract the description from the original command
+        description = original_command.replace("generate command", "").replace("create command", "").strip()
+        
+        if not description:
+            description = input("Enter command description: ")
+        
+        if not description:
+            self.print_colored("❌ Please provide a description for command generation.", 'error')
+            return
+        
+        self.print_colored(f"🤖 Generating command: {description}", 'info')
+        
+        result = self.command_generator.generate_command(description)
+        
+        if result.get("success"):
+            command = result["command"]
+            confidence = result["confidence"]
+            safety_level = result["safety_level"]
+            
+            self.print_colored("✅ Generated Command:", 'success')
+            self.print_colored(f"📝 Command: {command}", 'info')
+            self.print_colored(f"🎯 Confidence: {confidence:.2f}", 'info')
+            self.print_colored(f"🛡️  Safety Level: {safety_level}", 
+                              'warning' if safety_level != 'safe' else 'success')
+            
+            if result.get("requires_sudo"):
+                self.print_colored("⚠️  Note: This command requires sudo privileges", 'warning')
+            
+            # Ask if user wants to execute the command
+            if safety_level != 'dangerous':
+                execute = input("Execute this command? (y/N): ").lower().strip()
+                if execute == 'y':
+                    try:
+                        import subprocess
+                        result = subprocess.run(command, shell=True, capture_output=True, text=True)
+                        if result.returncode == 0:
+                            self.print_colored("✅ Command executed successfully:", 'success')
+                            if result.stdout:
+                                print(result.stdout)
+                        else:
+                            self.print_colored("❌ Command failed:", 'error')
+                            if result.stderr:
+                                print(result.stderr)
+                    except Exception as e:
+                        self.print_colored(f"❌ Error executing command: {e}", 'error')
+            else:
+                self.print_colored("⚠️  Command marked as dangerous - execution blocked for safety", 'error')
+                
+        else:
+            self.print_colored(f"❌ Failed to generate command: {result.get('error', 'Unknown error')}", 'error')
+            suggestions = result.get("suggestions", [])
+            if suggestions:
+                self.print_colored("💡 Suggestions:", 'info')
+                for suggestion in suggestions:
+                    self.print_colored(f"    • {suggestion}", 'info')
+    
+    def _handle_generate_script(self, parameters: Dict[str, Any], original_command: str):
+        """Handle script generation from natural language."""
+        # Extract the description from the original command
+        description = original_command.replace("generate script", "").replace("create script", "").strip()
+        
+        if not description:
+            description = input("Enter script description: ")
+        
+        if not description:
+            self.print_colored("❌ Please provide a description for script generation.", 'error')
+            return
+        
+        self.print_colored(f"🤖 Generating script: {description}", 'info')
+        
+        # For script generation, we need to break down the description into commands
+        # This is a simplified approach - could be enhanced with more sophisticated parsing
+        commands = []
+        
+        # Try to generate individual commands from the description
+        command_result = self.command_generator.generate_command(description)
+        if command_result.get("success"):
+            commands.append(command_result["command"])
+        
+        if not commands:
+            self.print_colored("❌ Could not generate commands for the script.", 'error')
+            return
+        
+        # Generate the script
+        script_result = self.command_generator.generate_script(description, commands)
+        
+        if script_result.get("success"):
+            script_content = script_result["script_content"]
+            script_name = script_result["script_name"]
+            safety = script_result["safety_assessment"]
+            
+            self.print_colored("✅ Generated Script:", 'success')
+            self.print_colored(f"📄 Script Name: {script_name}", 'info')
+            self.print_colored(f"🛡️  Safety Level: {safety['overall_safety']}", 
+                              'warning' if safety['overall_safety'] != 'safe' else 'success')
+            
+            print("\n" + "="*50)
+            print(script_content)
+            print("="*50 + "\n")
+            
+            # Ask if user wants to save the script
+            save = input("Save this script to file? (y/N): ").lower().strip()
+            if save == 'y':
+                save_result = self.command_generator.save_script(script_content, script_name)
+                if save_result.get("success"):
+                    self.print_colored(f"✅ Script saved to: {save_result['script_path']}", 'success')
+                    self.print_colored(f"📏 Size: {save_result['size']} bytes", 'info')
+                    if save_result.get("executable"):
+                        self.print_colored("🔧 Script is executable", 'success')
+                else:
+                    self.print_colored(f"❌ Failed to save script: {save_result.get('error')}", 'error')
+        else:
+            self.print_colored(f"❌ Failed to generate script: {script_result.get('error', 'Unknown error')}", 'error')
     
     def run(self):
         """Run the CLI interface."""
