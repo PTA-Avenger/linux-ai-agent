@@ -103,6 +103,33 @@ class IntentParser:
                 r"bring back (.+)",
             ],
             
+            # AI operations
+            "ai_stats": [
+                r"ai (?:stats|statistics)",
+                r"show ai (?:stats|statistics)",
+                r"ai agent (?:stats|statistics|status)",
+            ],
+            "ai_recommend": [
+                r"ai recommend(?:ation)?s? (.+)",
+                r"what (?:do you |would you )?(?:recommend|suggest) (?:for )?(.+)",
+                r"ai (?:advice|suggestion)s? (?:for )?(.+)",
+            ],
+            "generate_command": [
+                r"generate (?:a )?command (?:to |for |that )?(.+)",
+                r"create (?:a )?command (?:to |for |that )?(.+)",
+                r"make (?:a )?command (?:to |for |that )?(.+)",
+            ],
+            "generate_script": [
+                r"generate (?:a )?script (?:to |for )?(.+)",
+                r"create (?:a )?script (?:to |for )?(.+)",
+                r"make (?:a )?script (?:to |for )?(.+)",
+            ],
+            "heuristic_scan": [
+                r"heuristic scan (.+)",
+                r"analyze (.+) heuristically",
+                r"check (.+) with heuristics",
+            ],
+            
             # General commands
             "help": [
                 r"help",
@@ -218,33 +245,43 @@ class IntentParser:
         """Extract parameters from matched text."""
         parameters = {}
         
-        # Extract file/directory paths from groups
+        # Extract arguments from groups
         if match.groups():
-            # First group is usually the main argument (file/directory path)
+            # First group is usually the main argument
             main_arg = match.group(1).strip()
             if main_arg:
-                parameters["path"] = main_arg
-                
-                # Try to determine if it's a file or directory
-                path_obj = Path(main_arg)
-                if path_obj.exists():
-                    parameters["is_file"] = path_obj.is_file()
-                    parameters["is_directory"] = path_obj.is_dir()
+                # For AI recommendations, treat as context
+                if "recommend" in text or "suggest" in text or "advice" in text:
+                    parameters["context"] = main_arg
+                    parameters["path"] = main_arg  # Also set as path for compatibility
+                # For command/script generation, treat as description
+                elif "generate" in text or "create" in text:
+                    parameters["description"] = main_arg
+                    parameters["path"] = main_arg  # Also set as path for compatibility
                 else:
-                    # Guess based on extension
-                    if path_obj.suffix:
-                        parameters["is_file"] = True
-                        parameters["is_directory"] = False
+                    # Default to path for file/directory operations
+                    parameters["path"] = main_arg
+                    
+                    # Try to determine if it's a file or directory
+                    path_obj = Path(main_arg)
+                    if path_obj.exists():
+                        parameters["is_file"] = path_obj.is_file()
+                        parameters["is_directory"] = path_obj.is_dir()
                     else:
-                        # Could be either, let the handler decide
-                        parameters["is_file"] = None
-                        parameters["is_directory"] = None
+                        # Guess based on extension
+                        if path_obj.suffix:
+                            parameters["is_file"] = True
+                            parameters["is_directory"] = False
+                        else:
+                            # Could be either, let the handler decide
+                            parameters["is_file"] = None
+                            parameters["is_directory"] = None
         
         return parameters
     
     def suggest_commands(self, partial_text: str, limit: int = 5) -> List[str]:
         """
-        Suggest commands based on partial input.
+        Suggest commands based on partial input with fuzzy matching.
         
         Args:
             partial_text: Partial user input
@@ -264,22 +301,76 @@ class IntentParser:
                 "read file <filename>",
                 "list directory <path>",
                 "check disk usage",
+                "ai stats",
                 "help"
             ]
         else:
-            # Find matching patterns
-            for intent, patterns in self.intent_patterns.items():
-                for pattern in patterns:
-                    # Convert regex pattern to readable format
-                    readable = self._pattern_to_readable(pattern)
-                    if partial_text in readable.lower():
-                        suggestions.append(readable)
-                        if len(suggestions) >= limit:
-                            break
-                if len(suggestions) >= limit:
-                    break
+            # Create example commands for each intent
+            intent_examples = {
+                "create_file": "create file <filename>",
+                "read_file": "read file <filename>",
+                "update_file": "update file <filename>",
+                "delete_file": "delete file <filename>",
+                "list_directory": "list directory <path>",
+                "scan_file": "scan file <filename>",
+                "scan_directory": "scan directory <path>",
+                "quarantine_file": "quarantine file <filename>",
+                "list_quarantine": "list quarantine",
+                "restore_file": "restore file <filename>",
+                "disk_usage": "check disk usage",
+                "system_stats": "system stats",
+                "monitor_directory": "monitor directory <path>",
+                "heuristic_scan": "heuristic scan <filename>",
+                "ai_stats": "ai stats",
+                "ai_recommend": "ai recommend <context>",
+                "generate_command": "generate command <description>",
+                "generate_script": "generate script <description>",
+                "help": "help",
+                "exit": "exit"
+            }
+            
+            # Find fuzzy matches
+            scored_suggestions = []
+            for intent, example in intent_examples.items():
+                score = self._calculate_fuzzy_score(partial_text, example.lower())
+                if score > 0.3:  # Minimum similarity threshold
+                    scored_suggestions.append((score, example))
+            
+            # Sort by score and return top suggestions
+            scored_suggestions.sort(key=lambda x: x[0], reverse=True)
+            suggestions = [suggestion for _, suggestion in scored_suggestions[:limit]]
         
-        return suggestions[:limit]
+        return suggestions
+    
+    def _calculate_fuzzy_score(self, input_text: str, target_text: str) -> float:
+        """Calculate fuzzy similarity score between two strings."""
+        # Simple fuzzy matching based on common substrings and character overlap
+        input_words = set(input_text.split())
+        target_words = set(target_text.split())
+        
+        # Word overlap score
+        if target_words:
+            word_overlap = len(input_words.intersection(target_words)) / len(target_words)
+        else:
+            word_overlap = 0
+        
+        # Character overlap score
+        input_chars = set(input_text.replace(' ', ''))
+        target_chars = set(target_text.replace(' ', ''))
+        if target_chars:
+            char_overlap = len(input_chars.intersection(target_chars)) / len(target_chars)
+        else:
+            char_overlap = 0
+        
+        # Substring score
+        substring_score = 0
+        for word in input_words:
+            if any(word in target_word for target_word in target_words):
+                substring_score += 0.5
+        
+        # Combine scores
+        total_score = (word_overlap * 0.5 + char_overlap * 0.3 + substring_score * 0.2)
+        return min(total_score, 1.0)
     
     def _pattern_to_readable(self, pattern: str) -> str:
         """Convert regex pattern to human-readable format."""

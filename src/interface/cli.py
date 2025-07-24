@@ -4,6 +4,7 @@ Command Line Interface for Linux AI Agent.
 
 import sys
 import os
+import time
 from pathlib import Path
 from typing import Dict, Any, Optional
 import json
@@ -145,7 +146,15 @@ Examples:
         
         if intent_result["confidence"] < 0.3:
             self.print_colored(f"❓ I'm not sure what you mean by '{command}'", 'warning')
-            self.print_colored("Type 'help' to see available commands.", 'info')
+            
+            # Try to suggest similar commands
+            suggestions = self.intent_parser.suggest_commands(command, limit=3)
+            if suggestions:
+                self.print_colored("💡 Did you mean:", 'info')
+                for suggestion in suggestions:
+                    self.print_colored(f"    • {suggestion}", 'info')
+            else:
+                self.print_colored("Type 'help' to see available commands.", 'info')
             return True
         
         try:
@@ -204,6 +213,12 @@ Examples:
             
             elif intent == "generate_script":
                 self._handle_generate_script(parameters, command)
+            
+            elif intent == "ai_stats":
+                self._handle_ai_stats()
+            
+            elif intent == "ai_recommend":
+                self._handle_ai_recommend(parameters, command)
             
             else:
                 self.print_colored(f"❓ Command '{intent}' is not implemented yet.", 'warning')
@@ -745,6 +760,71 @@ Examples:
             except Exception as e:
                 self.print_colored(f"❌ Unexpected error: {e}", 'error')
                 logger.error(f"Unexpected error in CLI: {e}")
+
+    def _handle_ai_stats(self):
+        """Handle AI agent statistics display."""
+        self.print_colored("🤖 AI Agent Statistics:", 'header')
+        
+        # RL Agent stats
+        rl_stats = self.rl_agent.get_statistics()
+        self.print_colored("📊 Reinforcement Learning Agent:", 'info')
+        for key, value in rl_stats.items():
+            self.print_colored(f"    • {key.replace('_', ' ').title()}: {value}", 'info')
+        
+        # Intent Parser stats
+        self.print_colored("🧠 Intent Parser:", 'info')
+        self.print_colored(f"    • Available Intents: {len(self.intent_parser.intent_patterns)}", 'info')
+        self.print_colored(f"    • Command History: {len(self.command_history)}", 'info')
+        
+        # Command Generator stats  
+        self.print_colored("⚙️  Command Generator:", 'info')
+        self.print_colored(f"    • Available Templates: {len(self.command_generator.command_templates)}", 'info')
+        
+        print()
+
+    def _handle_ai_recommend(self, parameters: Dict[str, Any], original_command: str):
+        """Handle AI recommendations."""
+        # Extract context from parameters or original command
+        context_text = parameters.get("context") or parameters.get("path") or ""
+        
+        if not context_text:
+            # Try to extract from original command
+            context_text = original_command.replace("ai recommend", "").replace("recommend", "").strip()
+        
+        if not context_text:
+            context_text = input("Enter context for recommendations: ")
+        
+        if not context_text:
+            self.print_colored("❌ Please provide context for recommendations.", 'error')
+            return
+        
+        self.print_colored(f"🤖 Getting AI recommendations for: {context_text}", 'info')
+        
+        # Create context for RL agent
+        context = {
+            "user_input": context_text,
+            "command_history": self.command_history[-5:],  # Last 5 commands
+            "current_directory": os.getcwd(),
+            "timestamp": time.time()
+        }
+        
+        try:
+            recommendations = self.rl_agent.get_recommendations(context)
+            
+            if recommendations:
+                self.print_colored("💡 AI Recommendations:", 'success')
+                for i, rec in enumerate(recommendations, 1):
+                    self.print_colored(f"    {i}. {rec}", 'info')
+            else:
+                self.print_colored("🤔 No specific recommendations available for this context.", 'warning')
+                self.print_colored("💡 General suggestions:", 'info')
+                self.print_colored("    • Use 'scan file <path>' to check files for malware", 'info')
+                self.print_colored("    • Use 'system stats' to monitor system health", 'info')
+                self.print_colored("    • Use 'generate command <description>' for custom commands", 'info')
+                
+        except Exception as e:
+            self.print_colored(f"❌ Error getting recommendations: {e}", 'error')
+            logger.error(f"Error getting AI recommendations: {e}")
 
 
 def main():
