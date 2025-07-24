@@ -4,6 +4,7 @@ Command Line Interface for Linux AI Agent.
 
 import sys
 import os
+import time
 from pathlib import Path
 from typing import Dict, Any, Optional
 import json
@@ -14,7 +15,14 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from crud import create_file, read_file, update_file, delete_file
 from monitor import get_disk_usage, monitor_disk_space, get_file_activity
 from scanner import ClamAVScanner, HeuristicScanner, QuarantineManager
+from scanner.scan_reporter import ScanReporter
 from ai import IntentParser, RLAgent, CommandGenerator
+try:
+    from ai import GemmaAgent
+    GEMMA_AVAILABLE = True
+except ImportError:
+    GemmaAgent = None
+    GEMMA_AVAILABLE = False
 from utils import get_logger, log_operation
 
 try:
@@ -38,6 +46,17 @@ class CLI:
         self.clamav_scanner = ClamAVScanner()
         self.heuristic_scanner = HeuristicScanner()
         self.quarantine_manager = QuarantineManager()
+        self.scan_reporter = ScanReporter()
+        
+        # Initialize Gemma agent if available
+        self.gemma_agent = None
+        if GEMMA_AVAILABLE:
+            try:
+                self.gemma_agent = GemmaAgent(mode="auto")
+                logger.info("Gemma agent initialized successfully")
+            except Exception as e:
+                logger.warning(f"Gemma agent initialization failed: {e}")
+                self.gemma_agent = None
         
         self.running = False
         self.command_history = []
@@ -90,6 +109,7 @@ Available Commands:
   • scan file <path>            - Scan file for malware
   • scan directory <path>       - Scan directory for malware
   • heuristic scan <path>       - Perform heuristic analysis
+  • detailed scan <path>        - Generate comprehensive security report
 
 🛡️ Quarantine Operations:
   • quarantine file <path>      - Move file to quarantine
@@ -107,6 +127,9 @@ Available Commands:
   • ai stats                    - Show AI agent statistics
   • generate command <desc>     - Generate shell command from description
   • generate script <desc>      - Generate shell script from description
+  • clean up                    - System cleanup recommendations
+  • gemma <question>            - Chat with Gemma AI assistant
+  • ai analyze <topic>          - AI-powered analysis of topics or files
 
 ⚙️ General:
   • help                        - Show this help
@@ -145,7 +168,15 @@ Examples:
         
         if intent_result["confidence"] < 0.3:
             self.print_colored(f"❓ I'm not sure what you mean by '{command}'", 'warning')
-            self.print_colored("Type 'help' to see available commands.", 'info')
+            
+            # Try to suggest similar commands
+            suggestions = self.intent_parser.suggest_commands(command, limit=3)
+            if suggestions:
+                self.print_colored("💡 Did you mean:", 'info')
+                for suggestion in suggestions:
+                    self.print_colored(f"    • {suggestion}", 'info')
+            else:
+                self.print_colored("Type 'help' to see available commands.", 'info')
             return True
         
         try:
@@ -199,11 +230,29 @@ Examples:
             elif intent == "heuristic_scan":
                 self._handle_heuristic_scan(parameters)
             
+            elif intent == "detailed_scan":
+                self._handle_detailed_scan(parameters)
+            
             elif intent == "generate_command":
                 self._handle_generate_command(parameters, command)
             
             elif intent == "generate_script":
                 self._handle_generate_script(parameters, command)
+            
+            elif intent == "ai_stats":
+                self._handle_ai_stats()
+            
+            elif intent == "ai_recommend":
+                self._handle_ai_recommend(parameters, command)
+            
+            elif intent == "system_cleanup":
+                self._handle_system_cleanup(parameters)
+            
+            elif intent == "gemma_chat":
+                self._handle_gemma_chat(parameters, command)
+            
+            elif intent == "ai_analyze":
+                self._handle_ai_analyze(parameters, command)
             
             else:
                 self.print_colored(f"❓ Command '{intent}' is not implemented yet.", 'warning')
@@ -365,6 +414,10 @@ Examples:
             for rec in recommendations[:2]:
                 confidence = int(rec["confidence"] * 100)
                 self.print_colored(f"    • {rec['action']} (confidence: {confidence}%)", 'info')
+        
+        # Offer detailed report option for suspicious files
+        if heuristic_result.get("overall_suspicious", False) or clamav_result.get("infected", False):
+            self.print_colored("\n💡 Tip: Use 'detailed scan <filename>' for comprehensive analysis report", 'info')
     
     def _handle_heuristic_scan(self, parameters: Dict[str, Any]):
         """Handle dedicated heuristic scanning."""
@@ -606,6 +659,57 @@ Examples:
         
         self.print_colored(f"🤖 Generating command: {description}", 'info')
         
+        # Try Gemma first for enhanced command generation
+        if self.gemma_agent:
+            try:
+                self.print_colored("🔮 Using Gemma AI for command generation...", 'info')
+                gemma_result = self.gemma_agent.generate_system_command(description)
+                
+                if gemma_result.get("success"):
+                    command = gemma_result["command"]
+                    explanation = gemma_result["explanation"]
+                    safety_level = gemma_result["safety_level"]
+                    confidence = gemma_result["confidence"]
+                    model_used = gemma_result["model_used"]
+                    
+                    self.print_colored("✅ Gemma Generated Command:", 'success')
+                    self.print_colored(f"📝 Command: {command}", 'info')
+                    self.print_colored(f"📖 Explanation: {explanation}", 'info')
+                    self.print_colored(f"🎯 Confidence: {confidence:.2f}", 'info')
+                    self.print_colored(f"🛡️  Safety Level: {safety_level}", 
+                                      'warning' if safety_level != 'safe' else 'success')
+                    self.print_colored(f"🔮 Model: {model_used}", 'info')
+                    
+                    # Ask if user wants to execute the command
+                    if safety_level != 'dangerous' and command:
+                        execute = input("Execute this command? (y/N): ").lower().strip()
+                        if execute == 'y':
+                            try:
+                                import subprocess
+                                result = subprocess.run(command, shell=True, capture_output=True, text=True)
+                                if result.returncode == 0:
+                                    self.print_colored("✅ Command executed successfully:", 'success')
+                                    if result.stdout:
+                                        print(result.stdout)
+                                else:
+                                    self.print_colored("❌ Command failed:", 'error')
+                                    if result.stderr:
+                                        print(result.stderr)
+                            except Exception as e:
+                                self.print_colored(f"❌ Error executing command: {e}", 'error')
+                    elif safety_level == 'dangerous':
+                        self.print_colored("⚠️  Command marked as dangerous - execution blocked for safety", 'error')
+                    
+                    return  # Use Gemma result and skip basic generator
+                else:
+                    logger.warning(f"Gemma command generation failed: {gemma_result.get('error')}")
+                    self.print_colored("⚠️  Gemma unavailable, using basic generator...", 'warning')
+                    
+            except Exception as e:
+                logger.warning(f"Gemma command generation error: {e}")
+                self.print_colored("⚠️  Gemma error, using basic generator...", 'warning')
+        
+        # Fallback to basic command generator
         result = self.command_generator.generate_command(description)
         
         if result.get("success"):
@@ -745,6 +849,569 @@ Examples:
             except Exception as e:
                 self.print_colored(f"❌ Unexpected error: {e}", 'error')
                 logger.error(f"Unexpected error in CLI: {e}")
+
+    def _handle_detailed_scan(self, parameters: Dict[str, Any]):
+        """Handle detailed file scanning with comprehensive reporting."""
+        if "path" not in parameters:
+            self.print_colored("❌ Please specify a file path for detailed scan.", 'error')
+            return
+        
+        filepath = parameters["path"]
+        self.print_colored(f"🔍 Performing detailed scan on '{filepath}'...", 'info')
+        self.print_colored("📊 Generating comprehensive report...", 'info')
+        
+        start_time = time.time()
+        
+        # Perform all scans
+        clamav_result = self.clamav_scanner.scan_file(filepath)
+        heuristic_result = self.heuristic_scanner.scan_file(filepath)
+        
+        processing_time = time.time() - start_time
+        
+        # Combine results for detailed analysis
+        combined_results = {
+            "infected": clamav_result.get("infected", False),
+            "virus_name": clamav_result.get("virus_name"),
+            "overall_suspicious": heuristic_result.get("overall_suspicious", False),
+            "risk_score": heuristic_result.get("risk_score", 0),
+            "all_reasons": heuristic_result.get("all_reasons", []),
+            "entropy_analysis": heuristic_result.get("entropy_analysis", {}),
+            "attribute_analysis": heuristic_result.get("attribute_analysis", {}),
+            "processing_time": f"{processing_time:.2f}s",
+            "scan_type": "detailed"
+        }
+        
+        # Generate detailed report
+        additional_data = {
+            "filepath": filepath,
+            "processing_time": f"{processing_time:.2f}s",
+            "deep_scan": True
+        }
+        
+        detailed_report = self.scan_reporter.generate_detailed_report(
+            "file_scan", combined_results, additional_data
+        )
+        
+        # Display comprehensive report
+        self._display_detailed_report(detailed_report, filepath)
+    
+    def _display_detailed_report(self, report: Dict[str, Any], filepath: str):
+        """Display a comprehensive detailed scan report."""
+        self.print_colored("\n" + "=" * 80, 'header')
+        self.print_colored("📋 COMPREHENSIVE SCAN REPORT", 'header')
+        self.print_colored("=" * 80, 'header')
+        
+        # Report header
+        self.print_colored(f"📁 File: {Path(filepath).name}", 'info')
+        self.print_colored(f"🆔 Report ID: {report.get('report_id', 'N/A')}", 'info')
+        self.print_colored(f"⏰ Timestamp: {report.get('timestamp', 'N/A')}", 'info')
+        
+        # Executive summary
+        summary = report.get('summary', 'No summary available')
+        if 'INFECTED' in summary:
+            self.print_colored(f"🚨 EXECUTIVE SUMMARY: {summary}", 'error')
+        elif 'SUSPICIOUS' in summary:
+            self.print_colored(f"⚠️  EXECUTIVE SUMMARY: {summary}", 'warning')
+        else:
+            self.print_colored(f"✅ EXECUTIVE SUMMARY: {summary}", 'success')
+        
+        # File analysis
+        file_analysis = report.get('file_analysis', {})
+        if file_analysis and not file_analysis.get('error'):
+            self.print_colored("\n📊 FILE ANALYSIS:", 'header')
+            
+            basic_info = file_analysis.get('basic_info', {})
+            if basic_info:
+                self.print_colored(f"    📏 Size: {basic_info.get('size_human', 'Unknown')}", 'info')
+                self.print_colored(f"    📝 Type: {basic_info.get('extension', 'Unknown')}", 'info')
+                self.print_colored(f"    📅 Modified: {basic_info.get('modified', 'Unknown')[:19]}", 'info')
+            
+            file_type = file_analysis.get('file_type', {})
+            if file_type:
+                category = file_type.get('category', 'unknown')
+                risk_level = file_type.get('risk_level', 'unknown')
+                description = file_type.get('description', 'No description')
+                
+                risk_color = 'error' if risk_level == 'high' else 'warning' if risk_level == 'medium' else 'success'
+                self.print_colored(f"    🏷️  Category: {category.title()} ({risk_level.upper()} risk)", risk_color)
+                self.print_colored(f"    📄 Description: {description}", 'info')
+            
+            # File hashes
+            identity = file_analysis.get('identity', {})
+            if identity and identity.get('sha256'):
+                self.print_colored(f"    🔐 SHA256: {identity['sha256'][:32]}...", 'info')
+        
+        # Security assessment
+        security = report.get('security_assessment', {})
+        if security:
+            self.print_colored("\n🛡️  SECURITY ASSESSMENT:", 'header')
+            
+            risk_level = security.get('risk_level', 'UNKNOWN')
+            risk_score = security.get('risk_score', 0)
+            
+            risk_color = 'error' if risk_level == 'CRITICAL' else 'warning' if risk_level in ['HIGH', 'MEDIUM'] else 'success'
+            self.print_colored(f"    📊 Risk Level: {risk_level} (Score: {risk_score}/100)", risk_color)
+            self.print_colored(f"    ⏰ Priority: {security.get('mitigation_priority', 'Unknown')}", 'info')
+            
+            risk_factors = security.get('risk_factors', [])
+            if risk_factors:
+                self.print_colored("    ⚠️  Risk Factors:", 'warning')
+                for factor in risk_factors:
+                    self.print_colored(f"        • {factor}", 'warning')
+            
+            threat_categories = security.get('threat_categories', [])
+            if threat_categories and threat_categories != ['no_threats']:
+                self.print_colored(f"    🎯 Threat Categories: {', '.join(threat_categories)}", 'warning')
+        
+        # Threat indicators
+        indicators = report.get('threat_indicators', [])
+        if indicators:
+            self.print_colored("\n🚩 THREAT INDICATORS:", 'header')
+            for i, indicator in enumerate(indicators[:10], 1):
+                severity = indicator.get('severity', 'unknown')
+                confidence = indicator.get('confidence', 0)
+                description = indicator.get('description', 'No description')
+                
+                severity_color = 'error' if severity == 'high' else 'warning' if severity == 'medium' else 'info'
+                self.print_colored(f"    {i}. {description}", severity_color)
+                self.print_colored(f"       Severity: {severity.upper()}, Confidence: {confidence:.1%}", 'info')
+            
+            if len(indicators) > 10:
+                self.print_colored(f"    ... and {len(indicators) - 10} more indicators", 'info')
+        
+        # Technical details
+        technical = report.get('technical_details', {})
+        if technical:
+            self.print_colored("\n🔧 TECHNICAL DETAILS:", 'header')
+            
+            scan_methods = technical.get('scan_methods', [])
+            if scan_methods:
+                self.print_colored(f"    🔍 Scan Methods: {', '.join(scan_methods)}", 'info')
+            
+            detection_engines = technical.get('detection_engines', [])
+            if detection_engines:
+                self.print_colored(f"    🤖 Detection Engines: {', '.join(detection_engines)}", 'info')
+            
+            processing_time = technical.get('processing_time', 'unknown')
+            self.print_colored(f"    ⏱️  Processing Time: {processing_time}", 'info')
+            
+            entropy_metrics = technical.get('entropy_metrics', {})
+            if entropy_metrics:
+                self.print_colored("    📈 Entropy Analysis:", 'info')
+                self.print_colored(f"        Average: {entropy_metrics.get('average', 0):.3f} bits/byte", 'info')
+                self.print_colored(f"        Maximum: {entropy_metrics.get('maximum', 0):.3f} bits/byte", 'info')
+                self.print_colored(f"        Chunks: {entropy_metrics.get('chunks_analyzed', 0)} analyzed", 'info')
+                self.print_colored(f"        High Entropy: {entropy_metrics.get('high_entropy_chunks', 0)} chunks", 'info')
+        
+        # Compliance check
+        compliance = report.get('compliance_check', {})
+        if compliance:
+            self.print_colored("\n📋 COMPLIANCE CHECK:", 'header')
+            
+            compliance_level = compliance.get('compliance_level', 'UNKNOWN')
+            compliance_score = compliance.get('compliance_score', 0)
+            
+            compliance_color = 'success' if compliance_level == 'COMPLIANT' else 'warning' if compliance_level == 'PARTIAL_COMPLIANCE' else 'error'
+            self.print_colored(f"    ✅ Status: {compliance_level} (Score: {compliance_score}/100)", compliance_color)
+            
+            issues = compliance.get('issues', [])
+            if issues:
+                self.print_colored("    ⚠️  Issues:", 'warning')
+                for issue in issues:
+                    self.print_colored(f"        • {issue}", 'warning')
+        
+        # Recommendations
+        recommendations = report.get('recommendations', [])
+        if recommendations:
+            self.print_colored("\n💡 RECOMMENDATIONS:", 'header')
+            
+            for i, rec in enumerate(recommendations[:5], 1):
+                priority = rec.get('priority', 'UNKNOWN')
+                action = rec.get('action', 'No action specified')
+                description = rec.get('description', 'No description')
+                rationale = rec.get('rationale', 'No rationale provided')
+                
+                priority_color = 'error' if priority == 'CRITICAL' else 'warning' if priority == 'HIGH' else 'info'
+                self.print_colored(f"    {i}. [{priority}] {description}", priority_color)
+                self.print_colored(f"       Action: {action}", 'info')
+                self.print_colored(f"       Rationale: {rationale}", 'info')
+                
+                steps = rec.get('steps', [])
+                if steps:
+                    self.print_colored("       Steps:", 'info')
+                    for step in steps[:3]:
+                        self.print_colored(f"         • {step}", 'info')
+                    if len(steps) > 3:
+                        self.print_colored(f"         ... and {len(steps) - 3} more steps", 'info')
+                
+                if i < len(recommendations):
+                    self.print_colored("", 'info')  # Empty line between recommendations
+        
+        # Report footer
+        self.print_colored("\n" + "=" * 80, 'header')
+        self.print_colored("📄 End of Report", 'header')
+        self.print_colored("=" * 80 + "\n", 'header')
+    
+    def _format_file_size(self, size_bytes: int) -> str:
+        """Format file size in human readable format."""
+        for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+            if size_bytes < 1024.0:
+                return f"{size_bytes:.1f} {unit}"
+            size_bytes /= 1024.0
+        return f"{size_bytes:.1f} PB"
+
+    def _handle_system_cleanup(self, parameters: Dict[str, Any]):
+        """Handle system cleanup operations."""
+        self.print_colored("🧹 System Cleanup Operations", 'header')
+        
+        # Generate cleanup script
+        cleanup_description = "clean up system files, logs, and temporary data"
+        
+        self.print_colored("🤖 Generating system cleanup script...", 'info')
+        
+        result = self.command_generator.generate_command(cleanup_description)
+        
+        if result.get("success"):
+            command = result["command"]
+            confidence = result["confidence"]
+            safety_level = result["safety_level"]
+            
+            self.print_colored("✅ Generated Cleanup Commands:", 'success')
+            self.print_colored(f"📝 Command: {command}", 'info')
+            self.print_colored(f"🎯 Confidence: {confidence:.2f}", 'info')
+            self.print_colored(f"🛡️  Safety Level: {safety_level}", 
+                              'warning' if safety_level != 'safe' else 'success')
+            
+            # Also provide manual cleanup suggestions
+            self.print_colored("\n💡 Manual Cleanup Recommendations:", 'header')
+            cleanup_tasks = [
+                "Clear package cache: sudo apt autoremove && sudo apt autoclean",
+                "Clean log files: sudo journalctl --vacuum-time=7d",
+                "Remove temporary files: sudo rm -rf /tmp/* (use with caution)",
+                "Clear user cache: rm -rf ~/.cache/*",
+                "Clean thumbnails: rm -rf ~/.thumbnails/*"
+            ]
+            
+            for i, task in enumerate(cleanup_tasks, 1):
+                self.print_colored(f"    {i}. {task}", 'info')
+            
+            self.print_colored("\n⚠️  Safety Notes:", 'warning')
+            self.print_colored("    • Review commands before execution", 'warning')
+            self.print_colored("    • Backup important data first", 'warning')
+            self.print_colored("    • Test in non-production environment", 'warning')
+            
+        else:
+            # Fallback to manual recommendations
+            self.print_colored("💡 System Cleanup Recommendations:", 'header')
+            
+            cleanup_categories = {
+                "🗂️  Package Management": [
+                    "sudo apt update && sudo apt upgrade",
+                    "sudo apt autoremove",
+                    "sudo apt autoclean"
+                ],
+                "📝 Log Files": [
+                    "sudo journalctl --vacuum-time=7d",
+                    "sudo find /var/log -name '*.log' -mtime +30 -delete",
+                    "sudo logrotate /etc/logrotate.conf"
+                ],
+                "🗃️  Temporary Files": [
+                    "sudo rm -rf /tmp/*",
+                    "rm -rf ~/.cache/*",
+                    "rm -rf ~/.thumbnails/*"
+                ],
+                "💾 Disk Space": [
+                    "df -h  # Check disk usage",
+                    "du -sh /* | sort -hr | head -10  # Find large directories",
+                    "find . -type f -size +100M  # Find large files"
+                ]
+            }
+            
+            for category, commands in cleanup_categories.items():
+                self.print_colored(f"\n{category}:", 'info')
+                                 for cmd in commands:
+                     self.print_colored(f"    • {cmd}", 'info')
+
+    def _handle_gemma_chat(self, parameters: Dict[str, Any], original_command: str):
+        """Handle direct chat with Gemma AI."""
+        if not self.gemma_agent:
+            self.print_colored("❌ Gemma AI is not available", 'error')
+            self.print_colored("💡 To enable Gemma:", 'info')
+            self.print_colored("    • Install dependencies: pip install google-generativeai transformers torch", 'info')
+            self.print_colored("    • Set API key: export GEMMA_API_KEY=your_key", 'info')
+            self.print_colored("    • Or use local model with transformers", 'info')
+            return
+        
+        # Extract question from parameters or original command
+        question = parameters.get("path") or parameters.get("context") or ""
+        
+        if not question:
+            # Try to extract from original command
+            question = original_command.replace("gemma", "").replace("ask gemma", "").replace("chat with gemma", "").strip()
+        
+        if not question:
+            question = input("Ask Gemma: ")
+        
+        if not question:
+            self.print_colored("❌ Please provide a question for Gemma.", 'error')
+            return
+        
+        self.print_colored(f"🔮 Asking Gemma: {question}", 'info')
+        
+        try:
+            result = self.gemma_agent.generate_response(
+                prompt=question,
+                system_prompt="You are a helpful AI assistant for system administration and cybersecurity. Provide clear, accurate, and practical responses.",
+                max_tokens=512,
+                temperature=0.7
+            )
+            
+            if result["success"]:
+                response = result["response"]
+                processing_time = result["processing_time"]
+                mode = result["mode"]
+                
+                self.print_colored("🤖 Gemma Response:", 'success')
+                self.print_colored(response, 'info')
+                self.print_colored(f"\n📊 Response generated in {processing_time} using {mode} mode", 'info')
+            else:
+                error = result.get("error", "Unknown error")
+                self.print_colored(f"❌ Gemma failed to respond: {error}", 'error')
+                
+        except Exception as e:
+            logger.error(f"Gemma chat error: {e}")
+            self.print_colored(f"❌ Error communicating with Gemma: {e}", 'error')
+
+    def _handle_ai_analyze(self, parameters: Dict[str, Any], original_command: str):
+        """Handle AI analysis requests."""
+        if not self.gemma_agent:
+            self.print_colored("❌ Gemma AI is not available for analysis", 'error')
+            self.print_colored("💡 Using basic analysis instead...", 'info')
+            # Fallback to basic analysis
+            self._handle_ai_recommend(parameters, original_command)
+            return
+        
+        # Extract topic from parameters or original command
+        topic = parameters.get("path") or parameters.get("context") or ""
+        
+        if not topic:
+            # Try to extract from original command
+            topic = original_command.replace("ai analyze", "").replace("analyze with ai", "").strip()
+        
+        if not topic:
+            topic = input("What would you like to analyze: ")
+        
+        if not topic:
+            self.print_colored("❌ Please provide a topic for analysis.", 'error')
+            return
+        
+        self.print_colored(f"🔍 Analyzing: {topic}", 'info')
+        
+        # Check if it's a file path for security analysis
+        if os.path.exists(topic):
+            self._analyze_file_with_gemma(topic)
+        else:
+            self._analyze_topic_with_gemma(topic)
+
+    def _analyze_file_with_gemma(self, filepath: str):
+        """Analyze a file using Gemma AI."""
+        self.print_colored(f"📁 Performing AI-enhanced file analysis on: {filepath}", 'info')
+        
+        try:
+            # First, perform regular scans
+            self.print_colored("🔍 Running security scans...", 'info')
+            clamav_result = self.clamav_scanner.scan_file(filepath)
+            heuristic_result = self.heuristic_scanner.scan_file(filepath)
+            
+            # Combine scan results
+            scan_results = {
+                "clamav": clamav_result,
+                "heuristic": heuristic_result,
+                "file_path": filepath,
+                "file_size": os.path.getsize(filepath) if os.path.exists(filepath) else 0
+            }
+            
+            # Get Gemma analysis
+            self.print_colored("🔮 Consulting Gemma AI for advanced analysis...", 'info')
+            gemma_analysis = self.gemma_agent.analyze_security_context(scan_results, filepath)
+            
+            if gemma_analysis.get("analysis"):
+                self.print_colored("🤖 Gemma AI Security Analysis:", 'header')
+                self.print_colored(gemma_analysis["analysis"], 'info')
+                
+                ai_risk_score = gemma_analysis.get("ai_risk_score", 0)
+                confidence = gemma_analysis.get("confidence", 0)
+                model_used = gemma_analysis.get("model_used", "Unknown")
+                
+                self.print_colored(f"\n📊 AI Risk Score: {ai_risk_score}/100", 'warning' if ai_risk_score > 50 else 'success')
+                self.print_colored(f"🎯 Analysis Confidence: {confidence:.1%}", 'info')
+                self.print_colored(f"🔮 Model Used: {model_used}", 'info')
+                
+                # Show AI recommendations
+                ai_recommendations = gemma_analysis.get("recommendations", [])
+                if ai_recommendations:
+                    self.print_colored("\n💡 AI Recommendations:", 'header')
+                    for i, rec in enumerate(ai_recommendations, 1):
+                        self.print_colored(f"    {i}. {rec}", 'info')
+            else:
+                error = gemma_analysis.get("error", "Unknown error")
+                self.print_colored(f"❌ Gemma analysis failed: {error}", 'error')
+                
+        except Exception as e:
+            logger.error(f"File analysis error: {e}")
+            self.print_colored(f"❌ Error during file analysis: {e}", 'error')
+
+    def _analyze_topic_with_gemma(self, topic: str):
+        """Analyze a general topic using Gemma AI."""
+        self.print_colored(f"🧠 Performing AI analysis on topic: {topic}", 'info')
+        
+        try:
+            system_prompt = """You are an expert system administrator and cybersecurity analyst. 
+            Provide comprehensive analysis of the given topic, focusing on:
+            1. Security implications and risks
+            2. Best practices and recommendations
+            3. Common issues and solutions
+            4. Relevant tools and techniques
+            Keep your analysis practical and actionable."""
+            
+            result = self.gemma_agent.generate_response(
+                prompt=f"Analyze this topic from a system administration and security perspective: {topic}",
+                system_prompt=system_prompt,
+                max_tokens=768,
+                temperature=0.5
+            )
+            
+            if result["success"]:
+                response = result["response"]
+                processing_time = result["processing_time"]
+                mode = result["mode"]
+                
+                self.print_colored("🤖 Gemma AI Analysis:", 'header')
+                self.print_colored(response, 'info')
+                self.print_colored(f"\n📊 Analysis completed in {processing_time} using {mode} mode", 'info')
+                
+                # Offer follow-up actions
+                self.print_colored("\n💡 Follow-up options:", 'header')
+                self.print_colored("    • Use 'generate command <description>' to create related commands", 'info')
+                self.print_colored("    • Use 'ai recommend <context>' for specific recommendations", 'info')
+                self.print_colored("    • Use 'gemma <question>' to ask follow-up questions", 'info')
+            else:
+                error = result.get("error", "Unknown error")
+                self.print_colored(f"❌ Gemma analysis failed: {error}", 'error')
+                
+        except Exception as e:
+            logger.error(f"Topic analysis error: {e}")
+            self.print_colored(f"❌ Error during topic analysis: {e}", 'error')
+
+    def _handle_ai_stats(self):
+        """Handle AI agent statistics display."""
+        self.print_colored("🤖 AI Agent Statistics:", 'header')
+        
+        # RL Agent stats
+        rl_stats = self.rl_agent.get_statistics()
+        self.print_colored("📊 Reinforcement Learning Agent:", 'info')
+        for key, value in rl_stats.items():
+            self.print_colored(f"    • {key.replace('_', ' ').title()}: {value}", 'info')
+        
+        # Intent Parser stats
+        self.print_colored("🧠 Intent Parser:", 'info')
+        self.print_colored(f"    • Available Intents: {len(self.intent_parser.intent_patterns)}", 'info')
+        self.print_colored(f"    • Command History: {len(self.command_history)}", 'info')
+        
+        # Command Generator stats  
+        self.print_colored("⚙️  Command Generator:", 'info')
+        self.print_colored(f"    • Available Templates: {len(self.command_generator.command_templates)}", 'info')
+        
+        # Gemma Agent stats
+        if self.gemma_agent:
+            self.print_colored("🔮 Gemma AI Agent:", 'info')
+            gemma_stats = self.gemma_agent.get_statistics()
+            for key, value in gemma_stats.items():
+                if key == 'success_rate':
+                    self.print_colored(f"    • {key.replace('_', ' ').title()}: {value:.2%}", 'info')
+                else:
+                    self.print_colored(f"    • {key.replace('_', ' ').title()}: {value}", 'info')
+            
+            # Health check
+            health = self.gemma_agent.health_check()
+            health_status = "✅ Healthy" if health["healthy"] else f"❌ Unhealthy ({health.get('error', 'Unknown error')})"
+            self.print_colored(f"    • Health Status: {health_status}", 'success' if health["healthy"] else 'error')
+        else:
+            self.print_colored("🔮 Gemma AI Agent:", 'warning')
+            self.print_colored("    • Status: Not Available", 'warning')
+            self.print_colored("    • Reason: Missing dependencies or configuration", 'warning')
+        
+        print()
+
+    def _handle_ai_recommend(self, parameters: Dict[str, Any], original_command: str):
+        """Handle AI recommendations."""
+        # Extract context from parameters or original command
+        context_text = parameters.get("context") or parameters.get("path") or ""
+        
+        if not context_text:
+            # Try to extract from original command
+            context_text = original_command.replace("ai recommend", "").replace("recommend", "").strip()
+        
+        if not context_text:
+            context_text = input("Enter context for recommendations: ")
+        
+        if not context_text:
+            self.print_colored("❌ Please provide context for recommendations.", 'error')
+            return
+        
+        self.print_colored(f"🤖 Getting AI recommendations for: {context_text}", 'info')
+        
+        # Try Gemma first for enhanced recommendations
+        if self.gemma_agent:
+            try:
+                self.print_colored("🔮 Consulting Gemma AI...", 'info')
+                gemma_recommendations = self.gemma_agent.provide_recommendations(context_text)
+                
+                if gemma_recommendations:
+                    self.print_colored("💡 Gemma AI Recommendations:", 'success')
+                    for i, rec in enumerate(gemma_recommendations, 1):
+                        priority = rec.get('priority', 'MEDIUM')
+                        description = rec.get('description', 'No description')
+                        rationale = rec.get('rationale', 'No rationale')
+                        
+                        priority_color = 'error' if priority == 'HIGH' else 'warning' if priority == 'MEDIUM' else 'info'
+                        self.print_colored(f"    {i}. [{priority}] {description}", priority_color)
+                        if rationale != "AI-generated recommendation":
+                            self.print_colored(f"       Rationale: {rationale}", 'info')
+                    
+                    return  # Use Gemma recommendations and skip RL agent
+                    
+            except Exception as e:
+                logger.warning(f"Gemma recommendations failed: {e}")
+                self.print_colored("⚠️  Gemma AI unavailable, using backup recommendations...", 'warning')
+        
+        # Fallback to RL agent recommendations
+        context = {
+            "user_input": context_text,
+            "command_history": self.command_history[-5:],  # Last 5 commands
+            "current_directory": os.getcwd(),
+            "timestamp": time.time()
+        }
+        
+        try:
+            recommendations = self.rl_agent.get_recommendations(context)
+            
+            if recommendations:
+                self.print_colored("💡 RL Agent Recommendations:", 'success')
+                for i, rec in enumerate(recommendations, 1):
+                    confidence = int(rec.get("confidence", 0) * 100)
+                    action = rec.get("action", "Unknown action")
+                    self.print_colored(f"    {i}. {action} (confidence: {confidence}%)", 'info')
+            else:
+                self.print_colored("🤔 No specific recommendations available for this context.", 'warning')
+                self.print_colored("💡 General suggestions:", 'info')
+                self.print_colored("    • Use 'scan file <path>' to check files for malware", 'info')
+                self.print_colored("    • Use 'system stats' to monitor system health", 'info')
+                self.print_colored("    • Use 'generate command <description>' for custom commands", 'info')
+                
+        except Exception as e:
+            self.print_colored(f"❌ Error getting recommendations: {e}", 'error')
+            logger.error(f"Error getting AI recommendations: {e}")
 
 
 def main():

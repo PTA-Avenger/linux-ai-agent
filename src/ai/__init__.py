@@ -21,6 +21,13 @@ except ImportError:
     MLMalwareDetector = None
     ML_MALWARE_DETECTOR_AVAILABLE = False
 
+try:
+    from .gemma_agent import GemmaAgent
+    GEMMA_AGENT_AVAILABLE = True
+except ImportError:
+    GemmaAgent = None
+    GEMMA_AGENT_AVAILABLE = False
+
 __all__ = [
     'IntentParser',
     'RLAgent',
@@ -33,3 +40,6 @@ if ENHANCED_INTENT_PARSER_AVAILABLE:
 
 if ML_MALWARE_DETECTOR_AVAILABLE:
     __all__.append('MLMalwareDetector')
+
+if GEMMA_AGENT_AVAILABLE:
+    __all__.append('GemmaAgent')
