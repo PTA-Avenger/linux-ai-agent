@@ -1129,8 +1129,8 @@ Examples:
             
             for category, commands in cleanup_categories.items():
                 self.print_colored(f"\n{category}:", 'info')
-                                 for cmd in commands:
-                     self.print_colored(f"    • {cmd}", 'info')
+                for cmd in commands:
+                    self.print_colored(f"    • {cmd}", 'info')
 
     def _handle_gemma_chat(self, parameters: Dict[str, Any], original_command: str):
         """Handle direct chat with Gemma AI."""
